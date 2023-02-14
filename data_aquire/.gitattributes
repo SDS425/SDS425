@@ -1,0 +1,5 @@
+POI_ArcGIS.zip filter=lfs diff=lfs merge=lfs -text
+POI_ArcGIS_data.rds filter=lfs diff=lfs merge=lfs -text
+POI_API_data.rds filter=lfs diff=lfs merge=lfs -text
+POI_geoms_cleaned_data.rds filter=lfs diff=lfs merge=lfs -text
+POI_data.rds filter=lfs diff=lfs merge=lfs -text
