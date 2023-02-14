@@ -1,0 +1,100 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(censusxy)
+library(data.table)
+library(collapse)
+library(compiler)
+library(stringr)
+library(ggplot2)
+library(sf)
+library(maps)
+
+knitr::opts_knit$set(root.dir = "C:/Users/darkg/Desktop/Dropbox/Homework Scans/2023S_SDS425/Project1_EV_Charging/data_collection")
+setDTthreads(threads = 0); threads = getDTthreads()
+data = readRDS("POI_ArcGIS_data.rds")
+```
+
+```{r}
+# Geocode our POI data by fuzzy-matching the addresses via the Census API which yields clean, standardized outputs (whenever a match exists)
+N = nrow(data)
+geocode_optimized = cmpfun(function(DT, threads=1){
+  Reduce(merge, Map(\(class, output, return, vintage)
+                    DT[, cxy_geocode(.SD,
+                                     id = "idx",
+                                     street = "street_address",
+                                     city = "city",
+                                     state = "state",
+                                     zip = "zip",
+                                     class = class,
+                                     output = output,
+                                     return = return,
+                                     vintage = vintage,
+                                     parallel = threads)] |> na.omit(),
+                    class = c("dataframe", "sf"),
+                    output = c("full", "simple"),
+                    return = c("geographies", "locations"),
+                    vintage = c(4, NULL)))
+})
+
+start_time = Sys.time()
+geocoded_data = copy(data)[1:N, geocode_optimized(.SD, threads)]
+stop_time = Sys.time()
+stop_time - start_time
+```
+
+```{r}
+# Form GEOID column
+geocoded_data[, GEOID := paste0(str_pad(cxy_state_id, 2, pad = "0"),
+                                str_pad(cxy_county_id, 3, pad = "0"),
+                                str_pad(cxy_tract_id, 6, pad = "0"))]
+
+# Drop redundant columns, rename, and reorder them
+columns_keep = c("name", "category", "GEOID", "cxy_lon", "cxy_lat", "geometry", "cxy_matched_address")
+geocoded_data |>
+  set(j = which(names(geocoded_data) %!in% columns_keep), value = NULL) |>
+  setcolorder(columns_keep) |>
+  setnames(old = c("cxy_lon", "cxy_lat", "cxy_matched_address"),
+           new = c("longitude", "latitude", "full_address"))
+
+# Some misc data-cleaning adjustments
+geocoded_data = geocoded_data[!category == ""]
+geocoded_data[, `:=`(GEOID = as.factor(GEOID), category = as.factor(category))]
+geocoded_data[, full_address := gsub("MARTIN LUTHER KING, JR", "MARTIN LUTHER KING JR", full_address)]
+
+# Recover the address components from the Census API's standardized address formatting
+# setDT(geocoded_data)[, c("street_address", "city", "state", "zip") := tstrsplit(full_address, ", ")]
+
+head(geocoded_data)
+```
+
+# Data (wide) GEOID-key'd category counts
+```{r}
+geocoded_data_wide = geocoded_data[, .N, by = c("GEOID", "category")] |>
+  dcast(GEOID ~ category, value.var = "N")
+
+head(geocoded_data_wide)
+```
+
+# Save outputs
+```{r, eval=FALSE}
+saveRDS(geocoded_data, "POI_geoms_cleaned_data.rds", compress = "xz")
+saveRDS(as.data.frame(geocoded_data[,-"geometry"]), "class_datasets/POI_data.rds", compress = "xz")
+saveRDS(as.data.frame(geocoded_data_wide), "class_datasets/POI_counts_data.rds", compress = "xz")
+```
+
+# Sketch plot for sanity check
+```{r fig.width=12, fig.height=6, eval=FALSE}
+geocoded_data_mini = geocoded_data[state %!in% c("AK", "HI") & category %in% sample(unique(category), 6)]
+states = st_as_sf(map("state", plot = FALSE, fill = TRUE))
+
+ggplot() +
+  geom_sf(data = states) +
+  geom_sf(data = geocoded_data_mini, aes(geometry = geometry, color = category), size = 0.25) +
+  coord_sf() +
+  facet_wrap(~category, ncol = 3) + 
+  theme_bw()
+```
