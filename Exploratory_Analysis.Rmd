@@ -25,8 +25,39 @@ data = fread("merged_data.csv")
 ```
 
 ```{r}
+#adding comment
 data
+
+#histogram
+
+hist(data$EV.Level2.EVSE.Num, breaks = 100, main ="Histogram of Level 2 Chargers")
+hist(data$EV.DC.Fast.Count, breaks = 100, main ="Histogram of Level 3 DCFC Chargers")
+hist(data$N_Stations, breaks = 100, main ="Histogram of total Chargers")
+
+y <- data_sample$N_Stations
+          
+x <- data.matrix(data_sample[, -c('EV.Level1.EVSE.Num', 'EV.Level2.EVSE.Num', 'EV.DC.Fast.Count', 'N_Stations')])
+
+library(glmnet)
+
+#perform k-fold cross-validation to find optimal lambda value
+cv_model <- cv.glmnet(x, y, alpha = 1)
+
+#find optimal lambda value that minimizes test MSE
+best_lambda <- cv_model$lambda.min
+best_lambda
+plot(cv_model)
+
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda)
+coef(best_model)
+
 ```
+
+```{r}
+pairs(data_sample[, c("N_Stations", "2016_dem_proportion", "Colleges, Universities, and Professional Schools", "Other Financial Investment Activities", "miles")])
+
+```
+
 
 ```{r}
 cv.glmnet(x = data[,-"GEOID"], y = data[,"GEOID"], nfolds = 15)$lambda.min
