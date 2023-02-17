@@ -1,6 +1,6 @@
 ---
 title: "R Notebook"
-output: html_notebook
+html_notebook: default
 ---
 
 ```{r setup}
@@ -14,7 +14,7 @@ library(collapse)
 library(data.table)
 
 set.seed(425)
-knitr::opts_chunk$set(cache.extra = quote(.Random.seed))
+knitr::opts_chunk$set(cache.extra = .Random.seed)
 knitr::opts_chunk$set(root.dir = "./2023S_SDS425/Project1_EV_Charging/data_collection")
 
 setDTthreads(threads = 0); threads = getDTthreads()
@@ -25,6 +25,12 @@ data = fread("merged_data.csv")
 ```
 
 ```{r}
+data |> purrr::map_int(purrr::compose(sum, is.na)) |> sort() |> rev()
+```
+
+
+
+```{r}
 #adding comment
 data
 
@@ -32,11 +38,11 @@ data
 
 hist(data$EV.Level2.EVSE.Num, breaks = 100, main ="Histogram of Level 2 Chargers")
 hist(data$EV.DC.Fast.Count, breaks = 100, main ="Histogram of Level 3 DCFC Chargers")
-hist(data$N_Stations, breaks = 100, main ="Histogram of total Chargers")
+hist(data$N.Stations, breaks = 100, main ="Histogram of total Chargers")
 
-y <- data_sample$N_Stations
+y <- data$N.Stations
           
-x <- data.matrix(data_sample[, -c('EV.Level1.EVSE.Num', 'EV.Level2.EVSE.Num', 'EV.DC.Fast.Count', 'N_Stations')])
+x <- data.matrix(data[, -c("EV.Level1.EVSE.Num", "EV.Level2.EVSE.Num", "EV.DC.Fast.Count", "N.Stations")])
 
 library(glmnet)
 
