@@ -1,6 +1,6 @@
 ---
 title: "R Notebook"
-output: html_notebook
+html_notebook: default
 ---
 
 ```{r setup}
@@ -14,14 +14,19 @@ library(magrittr)
 
 setDTthreads(threads = 0)
 knitr::opts_knit$set(root.dir = "./class_datasets")
+
+state.name = c(state.name, "District of Columbia")
+state.abb = c(state.abb, "DC")
+
+formals(merge.data.table)$all = TRUE
+merge = merge.data.table
 ```
 
 ```{r}
-RDS_files = grep(".rds", list.files(), value = TRUE)
-data_list = RDS_files |>
-  lapply(readRDS) |>
-  lapply(as.data.table) |>
-  setNames(gsub("(_data)?.rds", "", RDS_files))
+CSV_files = grep(".csv", list.files(), value = TRUE)
+data_list = CSV_files |>
+  lapply(fread) |>
+  setNames(gsub("(_data)?.csv", "", CSV_files))
 
 cleaned_data_list = copy(data_list)
 names(cleaned_data_list)
@@ -49,27 +54,27 @@ head(cleaned_data_list[["gasprice"]])
 
 ```{r}
 cleaned_data_list[["climate_attitudes"]][, (5:19) := lapply(.SD, as.numeric), .SDcols = -c(1:4)]
-cleaned_data_list[["climate_attitudes"]][, state := state.abb[match(trimws(State), state.name)]]
+cleaned_data_list[["climate_attitudes"]][, state := state.abb[match(trimws(State), c(state.name))]]
 cleaned_data_list[["climate_attitudes"]][, c("STATEFP", "COUNTYFP") := GEOID |>
                                            str_pad(5, pad = "0") |>
                                            substring(first = c(1,3), last = c(2,5)) |>
+                                           as.integer() |>
                                            as.list(), by = GEOID]
 cleaned_data_list[["climate_attitudes"]][, c("GEOID", "State", "County", "GeoName") := NULL]
-cleaned_data_list[["climate_attitudes"]] = na.omit(cleaned_data_list[["climate_attitudes"]], "state")
+cleaned_data_list[["climate_attitudes"]] = unique(cleaned_data_list[["climate_attitudes"]], by = c("STATEFP", "COUNTYFP"), fromLast = TRUE)
 
 head(cleaned_data_list[["climate_attitudes"]])
 ```
 
 ```{r}
-cleaned_data_list[["election"]] = as.data.table(readRDS("election_data.rds"))
-
 cleaned_data_list[["election"]][, `:=`(proportion = candidatevotes/totalvotes,
                                        party = substring(tolower(party), 1, 3))]
 
 cleaned_data_list[["election"]][, c("STATEFP", "COUNTYFP") := county_fips |>
-                                           str_pad(5, pad = "0") |>
-                                           substring(first = c(1,3), last = c(2,5)) |>
-                                           as.list(), by = county_fips]
+                                  str_pad(5, pad = "0") |>
+                                  substring(first = c(1,3), last = c(2,5)) |>
+                                  as.integer() |>
+                                  as.list(), by = county_fips]
 
 cleaned_data_list[["election"]] = cleaned_data_list[["election"]] |>
   subset(party == "dem") |>
@@ -82,16 +87,11 @@ cleaned_data_list[["election"]] = cleaned_data_list[["election"]] |>
 head(cleaned_data_list[["election"]])
 ```
 
-
 ```{r}
-cleaned_data_list[["road_milage"]] = cleaned_data_list[["road_milage"]][, GEOID := str_pad(GEOID, 11, pad = "0")]
-  
-head(cleaned_data_list[["road_milage"]])
+head(cleaned_data_list[["road_mileage"]])
 ```
 
 ```{r}
-cleaned_data_list[["rest_stops"]] = na.omit(cleaned_data_list[["rest_stops"]][, GEOID := str_pad(GEOID, 11, pad = "0")])
-
 head(cleaned_data_list[["rest_stops"]])
 ```
 
@@ -108,30 +108,30 @@ head(cleaned_data_list[["POI_counts"]])
 ```
 
 ```{r}
-lat_long_geoid = as.data.table(readRDS("EVstations_coord_GEOID.rds"))
-
-cleaned_data_list[["EVstations"]][, GEOID := lat_long_geoid$GEOID]
-cleaned_data_list[["EVstations"]] =
-  cleaned_data_list[["EVstations"]][!is.na(GEOID), c(.N, lapply(.SD, sum, na.rm = TRUE)), by=GEOID, .SDcols = 18:20]
-cleaned_data_list[["EVstations"]][, `:=`(N_Stations = N, N = NULL)]
+cleaned_data_list[["EVstations"]] = with(cleaned_data_list, EVstations[EVstations_coord_GEOID, on = .NATURAL])
+cleaned_data_list[["EVstations"]] = cleaned_data_list[["EVstations"]][!is.na(GEOID), c(.N, lapply(.SD, sum, na.rm = TRUE)), by=GEOID, .SDcols = 18:20] |> setnames("N", "N.Stations")
 ```
 
 
 ```{r}
-state_merged_data = merge(cleaned_data_list$laws_incentives, cleaned_data_list$gasprice, by = "state", all = TRUE)
-state_merged_data = merge(state_merged_data, cleaned_data_list$climate_attitudes, by = "state", all = TRUE)
-state_merged_data = merge(state_merged_data, cleaned_data_list$election, by = c("state", "STATEFP", "COUNTYFP"), all = TRUE)
+county_merged_data = with(cleaned_data_list, merge(gasprice[laws_incentives, on = .NATURAL],
+                                                   climate_attitudes[election, on = .NATURAL]))
 
-GEOID_merged_data = merge(cleaned_data_list$rest_stops, cleaned_data_list$road_milage, by = "GEOID", all = TRUE)
-GEOID_merged_data = merge(GEOID_merged_data, cleaned_data_list$POI_counts, by = "GEOID", all = TRUE)
+GEOID_merged_data = with(cleaned_data_list, Reduce(merge, list(POI_counts, road_mileage, rest_stops)))
 
-merged_data = merge(cleaned_data_list$census, cleaned_data_list$EVstations, by = "GEOID", all.x = TRUE)
-merged_data = merge(merged_data, GEOID_merged_data, by = "GEOID", all.x = TRUE)
-merged_data = merge(merged_data, state_merged_data, by =  c("state", "STATEFP", "COUNTYFP"), all.x = TRUE)
-merged_data = unique(merged_data, by = "GEOID")
+merged_data = with(cleaned_data_list, EVstations[census, on = .NATURAL] |>
+                     replace_NA(value = 0, cols = names(EVstations)))
+merged_data = GEOID_merged_data[county_merged_data[merged_data,
+                                                   on = c("state", "STATEFP", "COUNTYFP")],
+                                on = "GEOID"]
+merged_data[, `:=`(STATEFP = str_pad(STATEFP, 2, pad = 0),
+                   COUNTYFP = str_pad(COUNTYFP, 3, pad = 0),
+                   GEOID = str_pad(GEOID, 11, pad = 0))] |>
+  setcolorder(c("GEOID", "state", "STATEFP", "COUNTYFP"))
+
+head(merged_data)
 ```
 
 ```{r}
-saveRDS(merged_data, "../merged_data.rds", compress = "xz")
 fwrite(merged_data, "../merged_data.csv")
 ```
