@@ -3,17 +3,21 @@ title: "R Notebook"
 html_notebook: default
 ---
 
-```{r setup}
+```{r setup, include=FALSE}
 library(tidyr)
 library(stringr)
+library(magrittr)
 library(lubridate)
 library(data.table)
 library(collapse)
 library(ggplot2)
-library(magrittr)
+library(knitr)
+library(here)
 
+here::i_am(".git/config")
+here::here("data_aggregate", "class_datasets") %>%
+  knitr::opts_chunk$set("root.dir" = .)
 setDTthreads(threads = 0)
-knitr::opts_knit$set(root.dir = "./class_datasets")
 
 state.name = c(state.name, "District of Columbia")
 state.abb = c(state.abb, "DC")
@@ -22,7 +26,8 @@ formals(merge.data.table)$all = TRUE
 merge = merge.data.table
 ```
 
-```{r}
+```{r, warning=FALSE}
+setwd(knitr::opts_chunk$get("root.dir"))
 CSV_files = grep(".csv", list.files(), value = TRUE)
 data_list = CSV_files |>
   lapply(fread) |>
@@ -35,7 +40,6 @@ names(cleaned_data_list)
 ```{r}
 head(cleaned_data_list[["laws_incentives"]])
 ```
-
 
 ```{r}
 cleaned_data_list[["gasprice"]] = 
@@ -112,22 +116,28 @@ cleaned_data_list[["EVstations"]] = with(cleaned_data_list, EVstations[EVstation
 cleaned_data_list[["EVstations"]] = cleaned_data_list[["EVstations"]][!is.na(GEOID), c(.N, lapply(.SD, sum, na.rm = TRUE)), by=GEOID, .SDcols = 18:20] |> setnames("N", "N.Stations")
 ```
 
-
 ```{r}
-county_merged_data = with(cleaned_data_list, merge(gasprice[laws_incentives, on = .NATURAL],
-                                                   climate_attitudes[election, on = .NATURAL]))
+merged_data = with(cleaned_data_list, {
+  
+  state_merged_data = Reduce(merge, list(laws_incentives, gasprice))
+  county_merged_data = Reduce(merge, list(election, climate_attitudes))
+  GEOID_merged_data = Reduce(merge, list(POI_counts, road_mileage, rest_stops))
+  
+  state_merged_data[
+    county_merged_data[
+      GEOID_merged_data[
+        EVstations[census, on = .NATURAL] |> replace_NA(value = 0, cols = names(EVstations)),
+      on = "GEOID"],
+    on = c("state", "STATEFP", "COUNTYFP")],
+  on = "state"] 
 
-GEOID_merged_data = with(cleaned_data_list, Reduce(merge, list(POI_counts, road_mileage, rest_stops)))
+})
 
-merged_data = with(cleaned_data_list, EVstations[census, on = .NATURAL] |>
-                     replace_NA(value = 0, cols = names(EVstations)))
-merged_data = GEOID_merged_data[county_merged_data[merged_data,
-                                                   on = c("state", "STATEFP", "COUNTYFP")],
-                                on = "GEOID"]
 merged_data[, `:=`(STATEFP = str_pad(STATEFP, 2, pad = 0),
                    COUNTYFP = str_pad(COUNTYFP, 3, pad = 0),
+                   TRACTCE = str_pad(TRACTCE, 6, pad = 0),
                    GEOID = str_pad(GEOID, 11, pad = 0))] |>
-  setcolorder(c("GEOID", "state", "STATEFP", "COUNTYFP"))
+  setcolorder(c("GEOID", "state", "STATEFP", "COUNTYFP", "TRACTCE"))
 
 head(merged_data)
 ```

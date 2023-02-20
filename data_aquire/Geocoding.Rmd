@@ -5,23 +5,26 @@ output: html_notebook
 
 ```{r setup}
 library(censusxy)
-library(data.table)
-library(collapse)
-library(compiler)
 library(stringr)
 library(ggplot2)
 library(sf)
 library(maps)
+library(data.table)
+library(collapse)
+library(compiler)
+library(knitr)
+library(here)
 
-knitr::opts_knit$set(root.dir = "C:/Users/darkg/Desktop/Dropbox/Homework Scans/2023S_SDS425/Project1_EV_Charging/data_collection")
-setDTthreads(threads = 0); threads = getDTthreads()
+here::i_am(".git/config")
+knitr::opts_knit$set("root.dir" = here::here("data_aggregate"))
 data = readRDS("POI_ArcGIS_data.rds")
+setDTthreads(threads = 0)
 ```
 
 ```{r}
 # Geocode our POI data by fuzzy-matching the addresses via the Census API which yields clean, standardized outputs (whenever a match exists)
 N = nrow(data)
-geocode_optimized = cmpfun(function(DT, threads=1){
+geocode_optimized = cmpfun(function(DT, threads){
   Reduce(merge, Map(\(class, output, return, vintage)
                     DT[, cxy_geocode(.SD,
                                      id = "idx",
@@ -41,7 +44,7 @@ geocode_optimized = cmpfun(function(DT, threads=1){
 })
 
 start_time = Sys.time()
-geocoded_data = copy(data)[1:N, geocode_optimized(.SD, threads)]
+geocoded_data = copy(data)[1:N, geocode_optimized(.SD, getDTthreads())]
 stop_time = Sys.time()
 stop_time - start_time
 ```
