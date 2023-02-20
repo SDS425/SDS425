@@ -3,69 +3,128 @@ title: "R Notebook"
 html_notebook: default
 ---
 
-```{r setup}
-library(glmnet)
-library(corrplot)
+```{r setup, include=FALSE}
 library(broom)
+library(corrplot)
+library(GGally)
 library(ggplot2)
 library(sf)
-library(MASS)
-library(collapse)
-library(data.table)
-
-set.seed(425)
-knitr::opts_chunk$set(cache.extra = .Random.seed)
-knitr::opts_chunk$set(root.dir = "./2023S_SDS425/Project1_EV_Charging/data_collection")
-
-setDTthreads(threads = 0); threads = getDTthreads()
-data = fread("merged_data.csv")
-
-# sample_size = 1e4
-# data_sample = data[sample.int(n = .N, size = sample_size)]
-```
-
-```{r}
-data |> purrr::map_int(purrr::compose(sum, is.na)) |> sort() |> rev()
-```
-
-
-
-```{r}
-#adding comment
-data
-
-#histogram
-
-hist(data$EV.Level2.EVSE.Num, breaks = 100, main ="Histogram of Level 2 Chargers")
-hist(data$EV.DC.Fast.Count, breaks = 100, main ="Histogram of Level 3 DCFC Chargers")
-hist(data$N.Stations, breaks = 100, main ="Histogram of total Chargers")
-
-y <- data$N.Stations
-          
-x <- data.matrix(data[, -c("EV.Level1.EVSE.Num", "EV.Level2.EVSE.Num", "EV.DC.Fast.Count", "N.Stations")])
-
 library(glmnet)
+library(pscl)
+library(data.table)
+library(collapse)
+library(doFuture)
+library(parallel)
+library(knitr)
+library(here)
 
-#perform k-fold cross-validation to find optimal lambda value
-cv_model <- cv.glmnet(x, y, alpha = 1)
-
-#find optimal lambda value that minimizes test MSE
-best_lambda <- cv_model$lambda.min
-best_lambda
-plot(cv_model)
-
-best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda)
-coef(best_model)
-
+here::i_am(".git/config")
+knitr::opts_knit$set("root.dir" = here::here("data_analyze"))
+data_full = fread("../data_aggregate/merged_data.csv")
+setDTthreads(threads = 0)
+plan(multisession)
+doFuture::registerDoFuture()
 ```
 
 ```{r}
-pairs(data_sample[, c("N_Stations", "2016_dem_proportion", "Colleges, Universities, and Professional Schools", "Other Financial Investment Activities", "miles")])
+col_NA_counts =
+  t(data_full[, lapply(.SD, purrr::compose(sum, is.na))]) %>% 
+  data.table(keep.rownames = "var") %>% 
+  setorderv("V1", order = -1) %>%
+  with(setNames(split(var, group(V1)), paste0("#NA = ", unique(V1))))
 
+data_NA.free = na.omit(data_full[, .SD, .SDcols = -unlist(col_NA_counts[1:2])])
+
+head(col_NA_counts, 3)
+
+cat("nrow full merged dataset ", nrow(data_full))
+cat("\n")
+cat("\nnrow NA.free dataset ", nrow(data_NA.free))
+```
+
+```{r}
+data_POI_PCA =
+  copy(data_NA.free) |>
+  subset(select = col_NA_counts[[3]]) |>
+  prcomp()
+
+setDT(data_POI_PCA["sdev"])[,c("idx", "variance") := .(.I, sdev^2)] %>%
+    qplot(x = idx, y = variance, geom = c("line", "point"), data = .)
+
+cat("By keeping the POI data's first", which.min(c(summary(data_POI_PCA)[[6]][3,]) < 0.9), "Principal Components we retain over 90% of the entire dataset's variance")
+```
+
+
+```{r, warning = FALSE}
+data_POI_PCA = cbind(copy(data_NA.free)[, .SD, .SDcols = -col_NA_counts[[3]]], data_POI_PCA$x[,1:10])
+
+good_data_x = copy(data_POI_PCA)[, !data_POI_PCA[, names(data_POI_PCA) %like% "EV|N.Stations"
+                                               | sapply(.SD, is.character)], with = FALSE]
+good_data_y = data_POI_PCA$N.Stations
+
+cv_tune.lasso_model = suppressMessages(suppressWarnings(
+  cv.glmnet(x = data.matrix(good_data_x),
+            y = good_data_y,
+            nlambda = 1000,
+            nfolds = 500,
+            pmax = 15,
+            parallel = TRUE)))
+
+
+plot(cv_tune.lasso_model)
+```
+
+```{r}
+lasso_model = glmnet(x = good_data_x, y = good_data_y, lambda =  cv_tune.lasso_model$lambda.min)
+coef(lasso_model)
 ```
 
 
 ```{r}
-cv.glmnet(x = data[,-"GEOID"], y = data[,"GEOID"], nfolds = 15)$lambda.min
+vars_keep = rownames(coef(lasso_model))[which(as.matrix(coef(lasso_model)) != 0)][-1]
+
+data_keep = copy(data_POI_PCA)[, ..vars_keep]
+head(data_keep)
 ```
 
+```{r}
+corrplot.mixed(
+  cor(data_keep),
+  lower.col = "black",
+  upper = "ellipse",
+  number.cex = .25,
+  tl.col = "black",
+  tl.pos = "lt",
+  tl.cex = .5
+)
+```
+
+```{r, fig.width=14, fig.height=16}
+GGally::ggpairs(dplyr::sample_n(data_keep, 100)) +
+  theme(
+    plot.title = element_text(face = 'bold',
+                              size = 10,
+                              hjust = 0.5, margin = margin(b = 20)),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r}
+lm_model = lm(good_data_y ~ data.matrix(data_keep))
+summary(lm_model)
+plot(lm_model)
+```
+
+```{r}
+logit_model = glm(as.logical(good_data_y) ~ data.matrix(data_keep), family = binomial(link = "logit"))
+summary(logit_model)
+plot(logit_model)
+```
+
+
+```{r}
+data_keep_int = data_keep[, !data_keep[, sapply(.SD, is.double)], with = FALSE]
+
+zip_model = pscl::zeroinfl(good_data_y ~ data.matrix(data_keep_int), dist = "negbin")
+summary(zip_model)
+```
