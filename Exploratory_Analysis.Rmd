@@ -52,14 +52,23 @@ setDT(data_POI_PCA["sdev"])[,c("idx", "variance") := .(.I, sdev^2)] %>%
     qplot(x = idx, y = variance, geom = c("line", "point"), data = .)
 
 cat("By keeping the POI data's first", which.min(c(summary(data_POI_PCA)[[6]][3,]) < 0.9), "Principal Components we retain over 90% of the entire dataset's variance")
+
+data_POI_PCA = cbind(copy(data_NA.free)[, .SD, .SDcols = -col_NA_counts[[3]]], data_POI_PCA$x[,1:10])
 ```
 
 
 ```{r, warning = FALSE}
-data_POI_PCA = cbind(copy(data_NA.free)[, .SD, .SDcols = -col_NA_counts[[3]]], data_POI_PCA$x[,1:10])
+good_vars =
+  foreach(name=names(data_POI_PCA)) %do%
+  Reduce(or,
+         list(is.character(data_POI_PCA[[name]]),
+              name %like% "EV|N.Stations",
+              name %in% c("AFFGEOID","NAME","LSAD","tract","state.full","male.age","female.age","male.p","female.p","white.p","black.p","asian.p","hisp.p","white.not.hisp.p","white.hisp.p","black.hisp.p","other.p","rescaled.house.value","tot.hh.income","tot.house.value","tot.hh.income.and.house","pop.density","hh.density","income.density","house.value.density","house.and.income.density"))) |>
+  as.logical() |>
+  not()
 
-good_data_x = copy(data_POI_PCA)[, !data_POI_PCA[, names(data_POI_PCA) %like% "EV|N.Stations"
-                                               | sapply(.SD, is.character)], with = FALSE]
+good_data_x = copy(data_POI_PCA)[, ..good_vars]
+
 good_data_y = data_POI_PCA$N.Stations
 
 cv_tune.lasso_model = suppressMessages(suppressWarnings(
