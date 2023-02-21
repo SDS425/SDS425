@@ -10,3 +10,6 @@ To Do:
 - Logistics Model
 - Check assumptions 
 - Some maps 
+
+What tracts are best candidates?
+Where do the companies place them?
